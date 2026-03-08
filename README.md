@@ -4,7 +4,13 @@
 
 Browse your skills like a spellbook — organized by rarity, role, source, and custom packs. Click any skill to copy its command to clipboard. Build custom packs to group your favorite skills together.
 
-![Screenshot placeholder](screenshots/.gitkeep)
+<p align="center">
+  <img src="screenshots/skill-deck-main.png" alt="Skill Deck — Main view" width="680">
+</p>
+
+<p align="center">
+  <img src="screenshots/skill-deck-detail.png" alt="Skill Deck — Detail panel" width="680">
+</p>
 
 ## Features
 
