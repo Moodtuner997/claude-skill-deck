@@ -1,0 +1,127 @@
+{
+  "skills": [
+    {
+      "command": "/commit",
+      "name": "Commit",
+      "icon": "💾",
+      "description": "Create well-structured git commits with optional amend and fixup",
+      "source": "custom",
+      "role": "workflow",
+      "rarity": "rare",
+      "invocation": "slash",
+      "submodes": [
+        {"cmd": "/commit --amend", "label": "--amend", "desc": "Amend last commit"},
+        {"cmd": "/commit --fixup", "label": "--fixup", "desc": "Fixup commit for rebase"}
+      ]
+    },
+    {
+      "command": "/help",
+      "name": "Help",
+      "icon": "❓",
+      "description": "Get help with Claude Code commands and features",
+      "source": "native",
+      "role": "meta",
+      "rarity": "common",
+      "invocation": "slash"
+    },
+    {
+      "command": "/review-pr",
+      "name": "PR Review",
+      "icon": "🔍",
+      "description": "Review pull requests with thorough or quick analysis modes",
+      "source": "custom",
+      "role": "devtool",
+      "rarity": "epic",
+      "invocation": "slash",
+      "submodes": [
+        {"cmd": "/review-pr --thorough", "label": "--thorough", "desc": "Deep code review"},
+        {"cmd": "/review-pr --quick", "label": "--quick", "desc": "Fast surface review"}
+      ]
+    },
+    {
+      "command": "/test",
+      "name": "Test Runner",
+      "icon": "🧪",
+      "description": "Run test suites and report results with coverage",
+      "source": "custom",
+      "role": "devtool",
+      "rarity": "rare",
+      "invocation": "slash"
+    },
+    {
+      "command": "brainstorming",
+      "name": "Brainstorming",
+      "icon": "💡",
+      "description": "Structured creative exploration before building features",
+      "source": "plugin",
+      "role": "knowledge",
+      "rarity": "uncommon",
+      "invocation": "auto",
+      "plugin_name": "superpowers"
+    },
+    {
+      "command": "systematic-debugging",
+      "name": "Debugger",
+      "icon": "🐛",
+      "description": "Systematic approach to finding and fixing bugs",
+      "source": "plugin",
+      "role": "devtool",
+      "rarity": "uncommon",
+      "invocation": "auto",
+      "plugin_name": "superpowers"
+    },
+    {
+      "command": "writing-plans",
+      "name": "Plan Writer",
+      "icon": "📋",
+      "description": "Create detailed implementation plans from specs",
+      "source": "plugin",
+      "role": "knowledge",
+      "rarity": "uncommon",
+      "invocation": "auto",
+      "plugin_name": "superpowers"
+    },
+    {
+      "command": "/deploy",
+      "name": "Deploy",
+      "icon": "🚀",
+      "description": "Deploy applications to staging or production environments",
+      "source": "custom",
+      "role": "workflow",
+      "rarity": "legendary",
+      "invocation": "slash",
+      "submodes": [
+        {"cmd": "/deploy staging", "label": "staging", "desc": "Deploy to staging"},
+        {"cmd": "/deploy production", "label": "production", "desc": "Deploy to production"}
+      ]
+    },
+    {
+      "command": "/security-audit",
+      "name": "Security Audit",
+      "icon": "🛡",
+      "description": "Run security checks against OWASP top 10 and common vulnerabilities",
+      "source": "custom",
+      "role": "security",
+      "rarity": "epic",
+      "invocation": "slash"
+    },
+    {
+      "command": "parallel-agents",
+      "name": "Parallel Agents",
+      "icon": "⚔",
+      "description": "Dispatch independent tasks to multiple sub-agents simultaneously",
+      "source": "plugin",
+      "role": "agent",
+      "rarity": "uncommon",
+      "invocation": "auto",
+      "plugin_name": "superpowers"
+    }
+  ],
+  "packs": {
+    "DevOps Essentials": {
+      "icon": "🚀",
+      "description": "Core tools for deployment workflows",
+      "commands": ["/commit", "/deploy", "/test"]
+    }
+  }
+}
