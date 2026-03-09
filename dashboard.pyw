@@ -83,15 +83,6 @@ RARITY_LABELS = {
 }
 RARITY_ORDER = {"legendary": 0, "epic": 1, "rare": 2, "uncommon": 3, "common": 4}
 
-ROLE_COLORS = {
-    "agent":     "#8b5cad",
-    "workflow":  "#4a7fb5",
-    "devtool":   "#c05a50",
-    "security":  "#5a9a6e",
-    "meta":      "#b08840",
-    "knowledge": "#5a8fa0",
-}
-
 ROLE_INFO = {
     "agent":     {"icon": "⚔", "label": "Agents",     "color": "#8b5cad"},
     "workflow":  {"icon": "↻", "label": "Workflows",   "color": "#4a7fb5"},
@@ -108,6 +99,8 @@ SOURCE_INFO = {
     "native": {"icon": "▶", "label": "Natifs",  "color": "#8a8078"},
 }
 
+BUILDER_PACK_DEFAULT = {"name": "", "icon": "⚔", "description": "", "commands": []}
+
 FONT = "Segoe UI" if sys.platform == "win32" else "Helvetica"
 FONT_MONO = "Cascadia Code" if sys.platform == "win32" else "Courier"
 UI_DEFAULTS = {"opacity": 92, "window_x": None, "window_y": None,
@@ -119,18 +112,26 @@ EMOJI_PALETTE = ["⚔", "🛡", "🔧", "🐛", "🚀", "☀", "⚡", "🧪", "�
 
 # ── Data ──────────────────────────────────────────────────────
 
+def _load_json(path, default=None):
+    """Load a JSON file, returning default on missing/malformed files."""
+    if not path.exists():
+        return default
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, KeyError):
+        return default
+
+
 def load_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            cfg = {**UI_DEFAULTS, **json.load(f)}
-            # Ensure collapsed has all keys
-            defaults = UI_DEFAULTS["collapsed"]
-            cfg["collapsed"] = {**defaults, **cfg.get("collapsed", {})}
-            # Theme override
-            if "theme" in cfg:
-                T.update(cfg["theme"])
-            return cfg
-    return dict(UI_DEFAULTS)
+    data = _load_json(CONFIG_FILE)
+    if data is None:
+        return dict(UI_DEFAULTS)
+    cfg = {**UI_DEFAULTS, **data}
+    cfg["collapsed"] = {**UI_DEFAULTS["collapsed"], **cfg.get("collapsed", {})}
+    if "theme" in cfg:
+        T.update(cfg["theme"])
+    return cfg
 
 
 def save_config(cfg):
@@ -154,12 +155,9 @@ def default_data():
 
 
 def load_skills():
-    if SKILLS_FILE.exists():
-        try:
-            with open(SKILLS_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, KeyError):
-            pass
+    data = _load_json(SKILLS_FILE)
+    if data is not None:
+        return data
     data = default_data()
     with open(SKILLS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -169,49 +167,25 @@ def load_skills():
 def load_marketplace_data():
     """Load all marketplace plugin data from local files."""
     result = []
-    installed = set()
-    install_counts = {}
 
     # Parse installed plugins
-    installed_file = PLUGINS_DIR / "installed_plugins.json"
-    if installed_file.exists():
-        try:
-            with open(installed_file, encoding="utf-8") as f:
-                data = json.load(f)
-            for key in data.get("plugins", {}):
-                installed.add(key)
-        except (json.JSONDecodeError, KeyError):
-            pass
+    installed_data = _load_json(PLUGINS_DIR / "installed_plugins.json", {})
+    installed = set(installed_data.get("plugins", {}).keys()) if installed_data else set()
 
     # Parse install counts
-    counts_file = PLUGINS_DIR / "install-counts-cache.json"
-    if counts_file.exists():
-        try:
-            with open(counts_file, encoding="utf-8") as f:
-                data = json.load(f)
-            for entry in data.get("counts", []):
-                install_counts[entry["plugin"]] = entry.get("unique_installs", 0)
-        except (json.JSONDecodeError, KeyError):
-            pass
+    counts_data = _load_json(PLUGINS_DIR / "install-counts-cache.json", {})
+    install_counts = {e["plugin"]: e.get("unique_installs", 0)
+                      for e in counts_data.get("counts", [])} if counts_data else {}
 
     # Parse known marketplaces
-    mkt_file = PLUGINS_DIR / "known_marketplaces.json"
-    if not mkt_file.exists():
-        return result
-    try:
-        with open(mkt_file, encoding="utf-8") as f:
-            marketplaces = json.load(f)
-    except (json.JSONDecodeError, KeyError):
+    marketplaces = _load_json(PLUGINS_DIR / "known_marketplaces.json")
+    if not marketplaces:
         return result
 
     for mkt_name, mkt_info in marketplaces.items():
         catalog_path = Path(mkt_info.get("installLocation", "")) / ".claude-plugin" / "marketplace.json"
-        if not catalog_path.exists():
-            continue
-        try:
-            with open(catalog_path, encoding="utf-8") as f:
-                catalog = json.load(f)
-        except (json.JSONDecodeError, KeyError):
+        catalog = _load_json(catalog_path)
+        if not catalog:
             continue
 
         for plugin in catalog.get("plugins", []):
@@ -286,11 +260,14 @@ class SkillDeck:
         self.marketplace_mode = False
         self.marketplace_data = []
         self.builder_mode = False
-        self.builder_pack = {"name": "", "icon": "⚔", "description": "", "commands": []}
+        self.builder_pack = dict(BUILDER_PACK_DEFAULT, commands=[])
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self._refresh_list())
         self.skill_widgets = []
+        self.copy_label = None
         self._copy_job = None
+        self._watch_job = None
+        self._opacity_save_job = None
         self._skip_next_watch = False
 
         # Collapsible section state
@@ -325,6 +302,12 @@ class SkillDeck:
         self._watch_file()
 
     def _on_close(self):
+        if self._watch_job:
+            self.root.after_cancel(self._watch_job)
+        if self._copy_job:
+            self.root.after_cancel(self._copy_job)
+        if self._opacity_save_job:
+            self.root.after_cancel(self._opacity_save_job)
         self.config["window_x"] = self.root.winfo_x()
         self.config["window_y"] = self.root.winfo_y()
         self.config["collapsed"] = self.collapsed
@@ -394,8 +377,6 @@ class SkillDeck:
             content.pack_forget()
             self.collapsed[title] = True
             header.configure(text=f"▸ {title}")
-        self.config["collapsed"] = self.collapsed
-        save_config(self.config)
 
     # ── Sidebar ───────────────────────────────────────────
 
@@ -447,10 +428,10 @@ class SkillDeck:
         for name, pack in self.packs.items():
             btn = tk.Label(pack_content,
                            text=f" {pack['icon']}  {name}",
-                           font=(FONT, 10), fg="#c8782a", bg=T["sidebar"],
+                           font=(FONT, 10), fg=RARITY_COLORS["legendary"], bg=T["sidebar"],
                            anchor="w", padx=6, pady=3, cursor="hand2")
             btn.pack(fill="x", pady=1)
-            btn.bind("<Button-1>", lambda e, n=name: self._filter_pack(n))
+            btn.bind("<Button-1>", lambda e, n=name: self._filter_by("current_pack", n))
             self.pack_buttons[name] = btn
 
         # Builder toggle button (under packs)
@@ -471,7 +452,7 @@ class SkillDeck:
                            font=(FONT, 10), fg=info["color"], bg=T["sidebar"],
                            anchor="w", padx=6, pady=3, cursor="hand2")
             btn.pack(fill="x", pady=1)
-            btn.bind("<Button-1>", lambda e, r=role: self._filter_role(r))
+            btn.bind("<Button-1>", lambda e, r=role: self._filter_by("current_role", r))
             self.role_buttons[role] = btn
 
         # ── PAR PLUGIN ──
@@ -485,7 +466,7 @@ class SkillDeck:
                            font=(FONT, 9), fg=T["green"], bg=T["sidebar"],
                            anchor="w", padx=6, pady=2, cursor="hand2")
             btn.pack(fill="x", pady=1)
-            btn.bind("<Button-1>", lambda e, n=pname: self._filter_plugin(n))
+            btn.bind("<Button-1>", lambda e, n=pname: self._filter_by("current_plugin", n))
             self.plugin_buttons[pname] = btn
 
         # ── MARKETPLACE ──
@@ -594,6 +575,18 @@ class SkillDeck:
             self.detail_frame.grid()
             self.detail_visible = True
 
+    # ── Internal helpers ─────────────────────────────────
+
+    def _clear_detail(self):
+        for w in self.detail_frame.winfo_children():
+            w.destroy()
+        self.detail_frame.configure(height=170)
+
+    def _clear_scroll(self):
+        for w in self.scroll_frame.winfo_children():
+            w.destroy()
+        self.skill_widgets.clear()
+
     # ── Filtering ─────────────────────────────────────────
 
     def _clear_filters(self):
@@ -609,30 +602,13 @@ class SkillDeck:
         self._update_sidebar_hl()
         self._refresh_list()
 
-    def _filter_pack(self, pack_name):
-        if self.current_pack == pack_name:
+    def _filter_by(self, attr, value):
+        """Toggle a filter attribute (pack/role/plugin). Deselect if already active."""
+        if getattr(self, attr) == value:
             self._filter("all")
             return
         self._clear_filters()
-        self.current_pack = pack_name
-        self._update_sidebar_hl()
-        self._refresh_list()
-
-    def _filter_role(self, role):
-        if self.current_role == role:
-            self._filter("all")
-            return
-        self._clear_filters()
-        self.current_role = role
-        self._update_sidebar_hl()
-        self._refresh_list()
-
-    def _filter_plugin(self, plugin_name):
-        if self.current_plugin == plugin_name:
-            self._filter("all")
-            return
-        self._clear_filters()
-        self.current_plugin = plugin_name
+        setattr(self, attr, value)
         self._update_sidebar_hl()
         self._refresh_list()
 
@@ -685,9 +661,7 @@ class SkillDeck:
             self._refresh_marketplace()
             return
 
-        for w in self.scroll_frame.winfo_children():
-            w.destroy()
-        self.skill_widgets.clear()
+        self._clear_scroll()
 
         skills = self._get_filtered()
         for skill in skills:
@@ -705,9 +679,7 @@ class SkillDeck:
         self.list_canvas.yview_moveto(0)
 
     def _refresh_marketplace(self):
-        for w in self.scroll_frame.winfo_children():
-            w.destroy()
-        self.skill_widgets.clear()
+        self._clear_scroll()
 
         search = self.search_var.get().lower().strip()
         plugins = self.marketplace_data
@@ -741,17 +713,16 @@ class SkillDeck:
 
     def _watch_file(self):
         try:
-            if SKILLS_FILE.exists():
-                mtime = SKILLS_FILE.stat().st_mtime
-                if mtime != self._last_mtime:
-                    self._last_mtime = mtime
-                    if self._skip_next_watch:
-                        self._skip_next_watch = False
-                    else:
-                        self._reload_data()
+            mtime = SKILLS_FILE.stat().st_mtime
+            if mtime != self._last_mtime:
+                self._last_mtime = mtime
+                if self._skip_next_watch:
+                    self._skip_next_watch = False
+                else:
+                    self._reload_data()
         except OSError:
             pass
-        self.root.after(FILE_WATCH_INTERVAL, self._watch_file)
+        self._watch_job = self.root.after(FILE_WATCH_INTERVAL, self._watch_file)
 
     # ── Skill Card ────────────────────────────────────────
 
@@ -759,7 +730,7 @@ class SkillDeck:
         rarity = skill.get("rarity", "common")
         rc = RARITY_COLORS.get(rarity, "#9d9d9d")
         role = skill.get("role", "meta")
-        role_c = ROLE_COLORS.get(role, "#FF9F0A")
+        role_c = ROLE_INFO.get(role, {}).get("color", "#FF9F0A")
         is_sel = self.selected_skill and self.selected_skill["command"] == skill["command"]
         bg = T["card_select"] if is_sel else T["card"]
 
@@ -793,10 +764,7 @@ class SkillDeck:
             bld_btn = tk.Label(row1, text=bld_text, font=(FONT, 10, "bold"),
                                fg=bld_color, bg=bg, cursor="hand2", padx=4)
             bld_btn.pack(side="right", padx=(4, 8))
-            if in_pack:
-                bld_btn.bind("<Button-1>", lambda e, s=skill: self._builder_remove(s))
-            else:
-                bld_btn.bind("<Button-1>", lambda e, s=skill: self._builder_add(s))
+            bld_btn.bind("<Button-1>", lambda e, s=skill: self._builder_toggle(s))
 
         # Badges (right side)
         inv = skill.get("invocation", "slash")
@@ -890,8 +858,7 @@ class SkillDeck:
 
     def _show_marketplace_detail(self, plugin):
         self._show_detail_panel()
-        for w in self.detail_frame.winfo_children():
-            w.destroy()
+        self._clear_detail()
 
         header = tk.Frame(self.detail_frame, bg=T["detail_bg"])
         header.pack(fill="x")
@@ -915,11 +882,14 @@ class SkillDeck:
     # ── Selection & Copy ──────────────────────────────────
 
     def _select_skill(self, skill):
+        prev = self.selected_skill
         self.selected_skill = skill
 
         for s, card in self.skill_widgets:
-            target = T["card_select"] if s["command"] == skill["command"] else T["card"]
-            apply_bg(card, target)
+            if s["command"] == skill["command"]:
+                apply_bg(card, T["card_select"])
+            elif prev and s["command"] == prev["command"]:
+                apply_bg(card, T["card"])
 
         self._show_detail_panel()
         self._copy(skill["command"])
@@ -933,7 +903,7 @@ class SkillDeck:
     def _show_copy_feedback(self, text):
         if self._copy_job:
             self.root.after_cancel(self._copy_job)
-        if hasattr(self, "copy_label") and self.copy_label.winfo_exists():
+        if self.copy_label and self.copy_label.winfo_exists():
             self.copy_label.configure(text=f"✓  {text}  {LABELS['copied']}", fg=T["green"])
             self._copy_job = self.root.after(
                 1800, lambda: self.copy_label.configure(
@@ -943,15 +913,13 @@ class SkillDeck:
     # ── Detail Panel ──────────────────────────────────────
 
     def _show_detail_empty(self):
-        for w in self.detail_frame.winfo_children():
-            w.destroy()
+        self._clear_detail()
         tk.Label(self.detail_frame,
                  text=LABELS["empty_detail"],
                  font=(FONT, 10), fg=T["text_dim"], bg=T["detail_bg"]).pack(pady=30)
 
     def _show_detail(self, skill):
-        for w in self.detail_frame.winfo_children():
-            w.destroy()
+        self._clear_detail()
 
         rarity = skill.get("rarity", "common")
         rc = RARITY_COLORS.get(rarity, "#9d9d9d")
@@ -1013,23 +981,21 @@ class SkillDeck:
 
     def _enter_builder(self):
         self.builder_mode = True
-        self.builder_pack = {"name": "", "icon": "⚔", "description": "", "commands": []}
+        self.builder_pack = dict(BUILDER_PACK_DEFAULT, commands=[])
         self.builder_btn.configure(text=LABELS["builder_exit"], fg=T["red"])
         self._show_builder_panel()
-        self._refresh_list()
-
-    def _exit_builder(self):
-        self.builder_mode = False
-        self.builder_pack = {"name": "", "icon": "⚔", "description": "", "commands": []}
-        self.builder_btn.configure(text=LABELS["builder_enter"], fg=T["accent"])
-        self._show_detail_empty()
         self._refresh_list()
 
     def _exit_builder_mode_silent(self):
         """Exit builder without refreshing (caller handles it)."""
         self.builder_mode = False
-        self.builder_pack = {"name": "", "icon": "⚔", "description": "", "commands": []}
+        self.builder_pack = dict(BUILDER_PACK_DEFAULT, commands=[])
         self.builder_btn.configure(text=LABELS["builder_enter"], fg=T["accent"])
+
+    def _exit_builder(self):
+        self._exit_builder_mode_silent()
+        self._show_detail_empty()
+        self._refresh_list()
 
     def _builder_toggle(self, skill):
         cmd = skill["command"]
@@ -1040,28 +1006,11 @@ class SkillDeck:
         self._show_builder_panel()
         self._refresh_list()
 
-    def _builder_add(self, skill):
-        cmd = skill["command"]
-        if cmd not in self.builder_pack["commands"]:
-            self.builder_pack["commands"].append(cmd)
-        self._show_builder_panel()
-        self._refresh_list()
-
-    def _builder_remove(self, skill):
-        cmd = skill["command"]
-        if cmd in self.builder_pack["commands"]:
-            self.builder_pack["commands"].remove(cmd)
-        self._show_builder_panel()
-        self._refresh_list()
-
     def _show_builder_panel(self):
         # Preserve name from entry if it exists
         if hasattr(self, 'builder_name_var') and self.builder_name_var:
             self.builder_pack["name"] = self.builder_name_var.get()
-        for w in self.detail_frame.winfo_children():
-            w.destroy()
-
-        # Increase height for builder
+        self._clear_detail()
         self.detail_frame.configure(height=200)
 
         # Title
@@ -1085,11 +1034,11 @@ class SkillDeck:
         icon_row.pack(fill="x", pady=2)
         tk.Label(icon_row, text=LABELS["builder_icon"], font=(FONT, 9), fg=T["text2"],
                  bg=T["detail_bg"]).pack(side="left")
-        self._builder_icon_var = self.builder_pack.get("icon", "⚔")
+        current_icon = self.builder_pack.get("icon", "⚔")
         for emoji in EMOJI_PALETTE:
             ebtn = tk.Label(icon_row, text=emoji, font=(FONT, 12),
                             bg=T["detail_bg"], cursor="hand2", padx=2)
-            if emoji == self._builder_icon_var:
+            if emoji == current_icon:
                 ebtn.configure(bg=T["card_select"])
             ebtn.pack(side="left", padx=1)
             ebtn.bind("<Button-1>", lambda e, em=emoji: self._builder_set_icon(em))
@@ -1123,7 +1072,6 @@ class SkillDeck:
 
     def _builder_set_icon(self, emoji):
         self.builder_pack["icon"] = emoji
-        self._builder_icon_var = emoji
         self._show_builder_panel()
 
     def _builder_save(self):
@@ -1166,10 +1114,10 @@ class SkillDeck:
         for name, pack in self.packs.items():
             btn = tk.Label(pack_content,
                            text=f" {pack['icon']}  {name}",
-                           font=(FONT, 10), fg="#c8782a", bg=T["sidebar"],
+                           font=(FONT, 10), fg=RARITY_COLORS["legendary"], bg=T["sidebar"],
                            anchor="w", padx=6, pady=3, cursor="hand2")
             btn.pack(fill="x", pady=1, before=self.builder_btn)
-            btn.bind("<Button-1>", lambda e, n=name: self._filter_pack(n))
+            btn.bind("<Button-1>", lambda e, n=name: self._filter_by("current_pack", n))
             self.pack_buttons[name] = btn
 
     # ── Opacity ───────────────────────────────────────────
@@ -1178,7 +1126,9 @@ class SkillDeck:
         val = int(value)
         self.config["opacity"] = val
         self.root.attributes("-alpha", val / 100)
-        save_config(self.config)
+        if self._opacity_save_job:
+            self.root.after_cancel(self._opacity_save_job)
+        self._opacity_save_job = self.root.after(500, lambda: save_config(self.config))
 
 
 # ── Main ──────────────────────────────────────────────────────
